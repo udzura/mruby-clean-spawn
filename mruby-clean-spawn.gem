@@ -1,0 +1,6 @@
+name: mruby-clean-spawn
+description: CleanSpawn class
+author: Uchio Kondo
+website: https://github.com/udzura/mruby-clean-spawn
+protocol: git
+repository: https://github.com/udzura/mruby-clean-spawn.git
