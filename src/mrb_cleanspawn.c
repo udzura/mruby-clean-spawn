@@ -6,66 +6,60 @@
 ** See Copyright Notice in LICENSE
 */
 
-#include "mruby.h"
-#include "mruby/data.h"
+#include <mruby.h>
+#include <mruby/data.h>
+#include <mruby/error.h>
+#include <mruby/string.h>
+
+#include <spawn.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+
 #include "mrb_cleanspawn.h"
 
 #define DONE mrb_gc_arena_restore(mrb, 0);
 
-typedef struct {
-  char *str;
-  int len;
-} mrb_cleanspawn_data;
+extern char **environ;
 
-static const struct mrb_data_type mrb_cleanspawn_data_type = {
-  "mrb_cleanspawn_data", mrb_free,
-};
+static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self) {
+  char *program;
+  mrb_value *rest, ret;
+  mrb_int argc;
+  pid_t pid;
+  char **argv;
+  int i, status;
+  mrb_get_args(mrb, "z*", &program, &rest, &argc);
 
-static mrb_value mrb_cleanspawn_init(mrb_state *mrb, mrb_value self)
-{
-  mrb_cleanspawn_data *data;
-  char *str;
-  int len;
+  argv = mrb_malloc(mrb, sizeof(char *) * (argc + 2));
 
-  data = (mrb_cleanspawn_data *)DATA_PTR(self);
-  if (data) {
-    mrb_free(mrb, data);
+  argv[0] = program;
+  for (i = 0; i < argc; i++) {
+    argv[i + 1] = mrb_string_value_cstr(mrb, &rest[i]);
   }
-  DATA_TYPE(self) = &mrb_cleanspawn_data_type;
-  DATA_PTR(self) = NULL;
+  argv[argc + 1] = NULL;
 
-  mrb_get_args(mrb, "s", &str, &len);
-  data = (mrb_cleanspawn_data *)mrb_malloc(mrb, sizeof(mrb_cleanspawn_data));
-  data->str = str;
-  data->len = len;
-  DATA_PTR(self) = data;
+  if (posix_spawn(&pid, program, NULL, NULL, argv, environ) != 0) {
+    mrb_sys_fail(mrb, "posix_spawn");
+  }
 
-  return self;
+  if (waitpid(pid, &status, 0) < 0) {
+    mrb_sys_fail(mrb, "waitpid");
+  }
+
+  if (WIFEXITED(status)) {
+    ret = mrb_true_value();
+  } else {
+    ret = mrb_false_value();
+  }
+
+  return ret;
 }
 
-static mrb_value mrb_cleanspawn_hello(mrb_state *mrb, mrb_value self)
-{
-  mrb_cleanspawn_data *data = DATA_PTR(self);
-
-  return mrb_str_new(mrb, data->str, data->len);
+void mrb_mruby_clean_spawn_gem_init(mrb_state *mrb) {
+  struct RClass *kern;
+  kern = mrb->kernel_module;
+  mrb_define_method(mrb, kern, "spawn", mrb_do_cleanspawn, MRB_ARGS_ANY());
+  DONE;
 }
 
-static mrb_value mrb_cleanspawn_hi(mrb_state *mrb, mrb_value self)
-{
-  return mrb_str_new_cstr(mrb, "hi!!");
-}
-
-void mrb_mruby_clean_spawn_gem_init(mrb_state *mrb)
-{
-    struct RClass *cleanspawn;
-    cleanspawn = mrb_define_class(mrb, "CleanSpawn", mrb->object_class);
-    mrb_define_method(mrb, cleanspawn, "initialize", mrb_cleanspawn_init, MRB_ARGS_REQ(1));
-    mrb_define_method(mrb, cleanspawn, "hello", mrb_cleanspawn_hello, MRB_ARGS_NONE());
-    mrb_define_class_method(mrb, cleanspawn, "hi", mrb_cleanspawn_hi, MRB_ARGS_NONE());
-    DONE;
-}
-
-void mrb_mruby_clean_spawn_gem_final(mrb_state *mrb)
-{
-}
-
+void mrb_mruby_clean_spawn_gem_final(mrb_state *mrb) {}
