@@ -45,6 +45,7 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self) {
   if (waitpid(pid, &status, 0) < 0) {
     mrb_sys_fail(mrb, "waitpid");
   }
+  mrb_free(mrb, argv);
 
   if (WIFEXITED(status)) {
     ret = mrb_true_value();
