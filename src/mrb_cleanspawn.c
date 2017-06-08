@@ -103,7 +103,7 @@ void mrb_mruby_clean_spawn_gem_init(mrb_state *mrb)
 {
   struct RClass *kern, *cleanspawn;
   kern = mrb->kernel_module;
-  mrb_define_method(mrb, kern, "spawn", mrb_do_cleanspawn, MRB_ARGS_ANY());
+  mrb_define_method(mrb, kern, "clean_spawn", mrb_do_cleanspawn, MRB_ARGS_ANY());
 
   cleanspawn = mrb_define_module(mrb, "CleanSpawn");
   mrb_define_module_function(mrb, cleanspawn, "_test_fd_leak", mrb__test_fd_leak, MRB_ARGS_NONE());
