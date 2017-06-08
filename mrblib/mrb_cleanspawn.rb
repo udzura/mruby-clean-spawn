@@ -1,5 +1,2 @@
-class CleanSpawn
-  def bye
-    self.hello + " bye"
-  end
+module CleanSpawn
 end

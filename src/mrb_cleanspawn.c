@@ -12,6 +12,7 @@
 #include <mruby/string.h>
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
@@ -90,11 +91,22 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
   return ret;
 }
 
+static mrb_value mrb__test_fd_leak(mrb_state *mrb, mrb_value self)
+{
+  int fd1 = open("/dev/null", O_RDWR);
+  int fd2 = open("/dev/null", O_RDWR);
+  int fd3 = open("/dev/null", O_RDWR);
+  return mrb_nil_value();
+}
+
 void mrb_mruby_clean_spawn_gem_init(mrb_state *mrb)
 {
-  struct RClass *kern;
+  struct RClass *kern, *cleanspawn;
   kern = mrb->kernel_module;
   mrb_define_method(mrb, kern, "spawn", mrb_do_cleanspawn, MRB_ARGS_ANY());
+
+  cleanspawn = mrb_define_module(mrb, "CleanSpawn");
+  mrb_define_module_function(mrb, cleanspawn, "_test_fd_leak", mrb__test_fd_leak, MRB_ARGS_NONE());
   DONE;
 }
 
