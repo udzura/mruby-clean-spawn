@@ -91,6 +91,7 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
   return ret;
 }
 
+#ifdef MRB_DEBUG
 static mrb_value mrb__test_fd_leak(mrb_state *mrb, mrb_value self)
 {
   int fd1 = open("/dev/null", O_RDWR);
@@ -98,6 +99,7 @@ static mrb_value mrb__test_fd_leak(mrb_state *mrb, mrb_value self)
   int fd3 = open("/dev/null", O_RDWR);
   return mrb_nil_value();
 }
+#endif
 
 void mrb_mruby_clean_spawn_gem_init(mrb_state *mrb)
 {
@@ -105,8 +107,10 @@ void mrb_mruby_clean_spawn_gem_init(mrb_state *mrb)
   kern = mrb->kernel_module;
   mrb_define_method(mrb, kern, "clean_spawn", mrb_do_cleanspawn, MRB_ARGS_ANY());
 
+#ifdef MRB_DEBUG
   cleanspawn = mrb_define_module(mrb, "CleanSpawn");
   mrb_define_module_function(mrb, cleanspawn, "_test_fd_leak", mrb__test_fd_leak, MRB_ARGS_NONE());
+#endif
   DONE;
 }
 
