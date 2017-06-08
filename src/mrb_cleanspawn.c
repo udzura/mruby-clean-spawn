@@ -48,7 +48,7 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self) {
   mrb_free(mrb, argv);
 
   if (WIFEXITED(status)) {
-    ret = mrb_true_value();
+    ret = WEXITSTATUS(status) == 0 ? mrb_true_value() : mrb_false_value();
   } else {
     ret = mrb_false_value();
   }
