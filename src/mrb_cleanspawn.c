@@ -67,6 +67,7 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
       }
     }
   }
+  closedir(d);
 
   if (posix_spawn(&pid, program, &file_actions, NULL, argv, environ) != 0) {
     mrb_sys_fail(mrb, "posix_spawn");
