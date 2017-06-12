@@ -13,11 +13,11 @@
 
 #include <dirent.h>
 #include <fcntl.h>
-#include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 #include "mrb_cleanspawn.h"
 
@@ -33,7 +33,6 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
   pid_t pid;
   char **argv;
   int i, status;
-  posix_spawn_file_actions_t file_actions;
 
   mrb_get_args(mrb, "z*", &program, &rest, &argc);
 
@@ -45,39 +44,48 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
   }
   argv[argc + 1] = NULL;
 
-  if (posix_spawn_file_actions_init(&file_actions) != 0) {
-    mrb_sys_fail(mrb, "posix_spawn_file_actions_init");
-  }
+  switch (pid = fork()) {
+  case -1:
+    mrb_sys_fail(mrb, "fork");
+    break;
+  case 0: {
+    int fileno;
+    DIR *d = opendir("/proc/self/fd");
+    if (!d) {
+      mrb_sys_fail(mrb, "opendir: /proc/self/fd");
+    }
 
-  int fd;
-  DIR *d = opendir("/proc/self/fd");
-  if (!d) {
-    mrb_sys_fail(mrb, "opendir: /proc/self/fd");
-  }
-
-  struct dirent *dp;
-  while ((dp = readdir(d)) != NULL) {
-    if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, "..")) {
-      /* Skip */
-    } else {
-      fd = (int)strtol(dp->d_name, NULL, 0);
-      if (fd > 2) {
-        if (posix_spawn_file_actions_addclose(&file_actions, fd) != 0) {
-          mrb_sys_fail(mrb, "posix_spawn_file_actions_addclose");
+    struct dirent *dp;
+    while ((dp = readdir(d)) != NULL) {
+      if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, "..")) {
+        /* Skip */
+      } else {
+        fileno = (int)strtol(dp->d_name, NULL, 0);
+        if (fileno > 2) {
+          int flags = fcntl(fileno, F_GETFD);
+          if (flags < 0) {
+            mrb_sys_fail(mrb, "fcntl (get fd flags)");
+          }
+          if (fcntl(fileno, F_SETFD, flags | FD_CLOEXEC) < 0) {
+            mrb_sys_fail(mrb, "fcntl (set fd FD_CLOEXEC)");
+          }
         }
       }
     }
-  }
-  closedir(d);
+    closedir(d);
+    execve(program, argv, environ);
 
-  if (posix_spawn(&pid, program, &file_actions, NULL, argv, environ) != 0) {
-    mrb_sys_fail(mrb, "posix_spawn");
+    mrb_sys_fail(mrb, "execve");
+    _exit(127);
+  } break;
+  default:
+    break;
   }
+  mrb_free(mrb, argv);
 
   if (waitpid(pid, &status, 0) < 0) {
     mrb_sys_fail(mrb, "waitpid");
   }
-  mrb_free(mrb, argv);
 
   if (WIFEXITED(status)) {
     ret = WEXITSTATUS(status) == 0 ? mrb_true_value() : mrb_false_value();
