@@ -13,17 +13,32 @@
 
 #include <dirent.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <pthread.h>
+
 #include "mrb_cleanspawn.h"
 
 #define DONE mrb_gc_arena_restore(mrb, 0);
 
 extern char **environ;
+
+static pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
+#define DO_LOCK()                                                                                  \
+  do {                                                                                             \
+    if (pthread_mutex_lock(&mut) != 0)                                                             \
+      mrb_sys_fail(mrb, "pthread_mutex_lock");                                                     \
+  } while (0)
+#define DO_UNLOCK()                                                                                \
+  do {                                                                                             \
+    if (pthread_mutex_unlock(&mut) != 0)                                                           \
+      mrb_sys_fail(mrb, "pthread_mutex_unlock");                                                   \
+  } while (0)
 
 static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
 {
@@ -33,6 +48,16 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
   pid_t pid;
   char **argv;
   int i, status;
+  struct sigaction sa, sach, intr, quit, chld;
+  sigset_t omask;
+
+  sa.sa_handler = SIG_IGN;
+  sa.sa_flags = 0;
+  sigemptyset(&sa.sa_mask);
+
+  sach.sa_handler = SIG_DFL;
+  sach.sa_flags = 0;
+  sigemptyset(&sach.sa_mask);
 
   mrb_get_args(mrb, "z*", &program, &rest, &argc);
 
@@ -44,18 +69,49 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
   }
   argv[argc + 1] = NULL;
 
+  DO_LOCK();
+  if (sigaction(SIGCHLD, &sach, &chld) < 0)
+    goto out;
+  if (sigaction(SIGINT, &sa, &intr) < 0)
+    goto out_restore_sigchld;
+  if (sigaction(SIGQUIT, &sa, &quit) < 0)
+    goto out_restore_sigint;
+
+  DO_UNLOCK();
+
+  sigaddset(&sa.sa_mask, SIGCHLD);
+  if (sigprocmask(SIG_BLOCK, &sa.sa_mask, &omask) < 0) {
+    DO_LOCK();
+    (void)sigaction(SIGQUIT, &quit, (struct sigaction *)NULL);
+  out_restore_sigint:
+    (void)sigaction(SIGINT, &intr, (struct sigaction *)NULL);
+  out_restore_sigchld:
+    (void)sigaction(SIGCHLD, &chld, (struct sigaction *)NULL);
+  out:
+    DO_UNLOCK();
+    mrb_sys_fail(mrb, "sigaction");
+    return mrb_nil_value();
+  }
+
   switch (pid = fork()) {
   case -1:
     mrb_sys_fail(mrb, "fork");
     break;
   case 0: {
     int fileno;
-    DIR *d = opendir("/proc/self/fd");
+    DIR *d;
+    struct dirent *dp;
+
+    (void)sigaction(SIGQUIT, &quit, (struct sigaction *)NULL);
+    (void)sigaction(SIGINT, &intr, (struct sigaction *)NULL);
+    (void)sigaction(SIGCHLD, &chld, (struct sigaction *)NULL);
+    (void)sigprocmask(SIG_SETMASK, &omask, (sigset_t *)NULL);
+
+    d = opendir("/proc/self/fd");
     if (!d) {
       mrb_sys_fail(mrb, "opendir: /proc/self/fd");
     }
 
-    struct dirent *dp;
     while ((dp = readdir(d)) != NULL) {
       if (!strcmp(dp->d_name, ".") || !strcmp(dp->d_name, "..")) {
         /* Skip */
@@ -84,8 +140,20 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
   mrb_free(mrb, argv);
 
   if (waitpid(pid, &status, 0) < 0) {
-    mrb_sys_fail(mrb, "waitpid");
+    perror("waitpid");
+    status = -1;
   }
+  DO_LOCK();
+  if ((sigaction(SIGINT, &quit, (struct sigaction *)NULL) |
+       sigaction(SIGQUIT, &intr, (struct sigaction *)NULL)) != 0 ||
+      sigprocmask(SIG_SETMASK, &omask, (sigset_t *)NULL) != 0) {
+    (void)sigaction(SIGCHLD, &chld, (struct sigaction *)NULL);
+    mrb_sys_fail(mrb, "signal restoration");
+  }
+  if (sigaction(SIGCHLD, &chld, (struct sigaction *)NULL) != 0) {
+    mrb_sys_fail(mrb, "sigchld restoration");
+  }
+  DO_UNLOCK();
 
   if (WIFEXITED(status)) {
     ret = WEXITSTATUS(status) == 0 ? mrb_true_value() : mrb_false_value();
@@ -102,9 +170,9 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
 #ifdef MRB_DEBUG
 static mrb_value mrb__test_fd_leak(mrb_state *mrb, mrb_value self)
 {
-  int fd1 = open("/dev/null", O_RDWR);
-  int fd2 = open("/dev/null", O_RDWR);
-  int fd3 = open("/dev/null", O_RDWR);
+  (void)open("/dev/null", O_RDWR);
+  (void)open("/dev/null", O_RDWR);
+  (void)open("/dev/null", O_RDWR);
   return mrb_nil_value();
 }
 #endif
