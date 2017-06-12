@@ -107,8 +107,8 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
     (void)sigaction(SIGCHLD, &chld, (struct sigaction *)NULL);
     (void)sigprocmask(SIG_SETMASK, &omask, (sigset_t *)NULL);
 
-    (void)setpgid(0, 0);
     (void)setsid();
+    (void)setpgid(0, 0);
 
     d = opendir("/proc/self/fd");
     if (!d) {
