@@ -160,6 +160,8 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
         mrb_sys_fail(mrb, "write pid to task");
         _exit(2);
       }
+
+      mrb_free(mrb, path);
     }
 
     execve(program, argv, environ);
