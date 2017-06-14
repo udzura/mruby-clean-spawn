@@ -68,7 +68,7 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
 
   argv[0] = program;
   for (i = 0; i < argc; i++) {
-    argv[i + 1] = mrb_string_value_cstr(mrb, &rest[i]);
+    argv[i + 1] = mrb_str_to_cstr(mrb, rest[i]);
   }
   argv[argc + 1] = NULL;
 
@@ -161,8 +161,10 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
         _exit(2);
       }
       p = (int)getpid();
-      while (p = p / 10) {
+      while ((p = p / 10) > 0) {
         pidlen++;
+        if (pidlen >= PID_STR_LEN_MAX)
+          break;
       }
       snprintf(pidstr, pidlen, "%d", p);
       fwrite(pidstr, 1, pidlen, taskf);
