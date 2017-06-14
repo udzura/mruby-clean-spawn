@@ -117,7 +117,8 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
 
     d = opendir("/proc/self/fd");
     if (!d) {
-      mrb_sys_fail(mrb, "opendir: /proc/self/fd");
+      mrb_warn(mrb, "opendir: /proc/self/fd");
+      _exit(2);
     }
 
     while ((dp = readdir(d)) != NULL) {
@@ -128,36 +129,45 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
         if (fileno > 2) {
           int flags = fcntl(fileno, F_GETFD);
           if (flags < 0) {
-            mrb_sys_fail(mrb, "fcntl (get fd flags)");
+            mrb_warn(mrb, "fcntl (get fd flags)");
+            _exit(2);
           }
           if (fcntl(fileno, F_SETFD, flags | FD_CLOEXEC) < 0) {
-            mrb_sys_fail(mrb, "fcntl (set fd FD_CLOEXEC)");
+            mrb_warn(mrb, "fcntl (set fd FD_CLOEXEC)");
+            _exit(2);
           }
         }
       }
     }
     closedir(d);
 
-#define PID_STR_LEN 16
+#define PID_STR_LEN_MAX 16
     if (mrb_string_p(cgroot)) {
-      char *path, pidstr[PID_STR_LEN];
+      char *path, pidstr[PID_STR_LEN_MAX];
       FILE *taskf;
+      int p;
+      size_t pidlen = 2;
+      memset(pidstr, 0, PID_STR_LEN_MAX);
       path = mrb_malloc(mrb, RSTRING_LEN(cgroot) + sizeof("/tasks"));
       if (snprintf(path, (RSTRING_LEN(cgroot) + sizeof("/tasks")), "%s/tasks",
                    RSTRING_PTR(cgroot)) < 0) {
-        mrb_sys_fail(mrb, "snprintf");
+        mrb_warn(mrb, "snprintf");
         _exit(2);
       };
 
       taskf = fopen(path, "a");
       if (!taskf) {
-        mrb_sys_fail(mrb, "fopen");
+        mrb_warn(mrb, "fopen");
         _exit(2);
       }
-      snprintf(pidstr, PID_STR_LEN, "%d", getpid());
-      fwrite(pidstr, PID_STR_LEN, 1, taskf);
+      p = (int)getpid();
+      while (p = p / 10) {
+        pidlen++;
+      }
+      snprintf(pidstr, pidlen, "%d", p);
+      fwrite(pidstr, 1, pidlen, taskf);
       if (fclose(taskf) != 0) {
-        mrb_sys_fail(mrb, "write pid to task");
+        mrb_warn(mrb, "write pid to task");
         _exit(2);
       }
 
@@ -166,7 +176,7 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
 
     execve(program, argv, environ);
 
-    mrb_sys_fail(mrb, "execve");
+    mrb_warn(mrb, "execve");
     _exit(127);
   } break;
   default:
