@@ -14,6 +14,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
@@ -25,6 +26,8 @@
 #include "mrb_cleanspawn.h"
 
 #define DONE mrb_gc_arena_restore(mrb, 0);
+
+#define CLEAN_SPAWN_MODULE mrb_obj_value(mrb_module_get(mrb, "CleanSpawn"))
 
 extern char **environ;
 
@@ -43,7 +46,7 @@ static pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
 static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
 {
   char *program;
-  mrb_value *rest, ret;
+  mrb_value *rest, ret, cgroot;
   mrb_int argc;
   pid_t pid;
   char **argv;
@@ -65,9 +68,11 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
 
   argv[0] = program;
   for (i = 0; i < argc; i++) {
-    argv[i + 1] = mrb_string_value_cstr(mrb, &rest[i]);
+    argv[i + 1] = mrb_str_to_cstr(mrb, rest[i]);
   }
   argv[argc + 1] = NULL;
+
+  cgroot = mrb_funcall(mrb, CLEAN_SPAWN_MODULE, "cgroup_root_path", 0);
 
   DO_LOCK();
   if (sigaction(SIGCHLD, &sach, &chld) < 0)
@@ -112,7 +117,8 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
 
     d = opendir("/proc/self/fd");
     if (!d) {
-      mrb_sys_fail(mrb, "opendir: /proc/self/fd");
+      mrb_warn(mrb, "opendir: /proc/self/fd");
+      _exit(2);
     }
 
     while ((dp = readdir(d)) != NULL) {
@@ -123,18 +129,56 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
         if (fileno > 2) {
           int flags = fcntl(fileno, F_GETFD);
           if (flags < 0) {
-            mrb_sys_fail(mrb, "fcntl (get fd flags)");
+            mrb_warn(mrb, "fcntl (get fd flags)");
+            _exit(2);
           }
           if (fcntl(fileno, F_SETFD, flags | FD_CLOEXEC) < 0) {
-            mrb_sys_fail(mrb, "fcntl (set fd FD_CLOEXEC)");
+            mrb_warn(mrb, "fcntl (set fd FD_CLOEXEC)");
+            _exit(2);
           }
         }
       }
     }
     closedir(d);
+
+#define PID_STR_LEN_MAX 16
+    if (mrb_string_p(cgroot)) {
+      char *path, pidstr[PID_STR_LEN_MAX];
+      FILE *taskf;
+      int p;
+      size_t pidlen = 2;
+      memset(pidstr, 0, PID_STR_LEN_MAX);
+      path = mrb_malloc(mrb, RSTRING_LEN(cgroot) + sizeof("/tasks"));
+      if (snprintf(path, (RSTRING_LEN(cgroot) + sizeof("/tasks")), "%s/tasks",
+                   RSTRING_PTR(cgroot)) < 0) {
+        mrb_warn(mrb, "snprintf");
+        _exit(2);
+      };
+
+      taskf = fopen(path, "a");
+      if (!taskf) {
+        mrb_warn(mrb, "fopen");
+        _exit(2);
+      }
+      p = (int)getpid();
+      while ((p = p / 10) > 0) {
+        pidlen++;
+        if (pidlen >= PID_STR_LEN_MAX)
+          break;
+      }
+      snprintf(pidstr, pidlen, "%d", p);
+      fwrite(pidstr, 1, pidlen, taskf);
+      if (fclose(taskf) != 0) {
+        mrb_warn(mrb, "write pid to task");
+        _exit(2);
+      }
+
+      mrb_free(mrb, path);
+    }
+
     execve(program, argv, environ);
 
-    mrb_sys_fail(mrb, "execve");
+    mrb_warn(mrb, "execve");
     _exit(127);
   } break;
   default:
