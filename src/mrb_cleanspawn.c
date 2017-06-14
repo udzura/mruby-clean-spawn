@@ -14,6 +14,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
@@ -25,6 +26,8 @@
 #include "mrb_cleanspawn.h"
 
 #define DONE mrb_gc_arena_restore(mrb, 0);
+
+#define CLEAN_SPAWN_MODULE mrb_obj_value(mrb_module_get(mrb, "CleanSpawn"))
 
 extern char **environ;
 
@@ -43,7 +46,7 @@ static pthread_mutex_t mut = PTHREAD_MUTEX_INITIALIZER;
 static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
 {
   char *program;
-  mrb_value *rest, ret;
+  mrb_value *rest, ret, cgroot;
   mrb_int argc;
   pid_t pid;
   char **argv;
@@ -68,6 +71,8 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
     argv[i + 1] = mrb_string_value_cstr(mrb, &rest[i]);
   }
   argv[argc + 1] = NULL;
+
+  cgroot = mrb_funcall(mrb, CLEAN_SPAWN_MODULE, "cgroup_root_path", 0);
 
   DO_LOCK();
   if (sigaction(SIGCHLD, &sach, &chld) < 0)
@@ -132,6 +137,31 @@ static mrb_value mrb_do_cleanspawn(mrb_state *mrb, mrb_value self)
       }
     }
     closedir(d);
+
+#define PID_STR_LEN 16
+    if (mrb_string_p(cgroot)) {
+      char *path, pidstr[PID_STR_LEN];
+      FILE *taskf;
+      path = mrb_malloc(mrb, RSTRING_LEN(cgroot) + sizeof("/tasks"));
+      if (snprintf(path, (RSTRING_LEN(cgroot) + sizeof("/tasks")), "%s/tasks",
+                   RSTRING_PTR(cgroot)) < 0) {
+        mrb_sys_fail(mrb, "snprintf");
+        _exit(2);
+      };
+
+      taskf = fopen(path, "a");
+      if (!taskf) {
+        mrb_sys_fail(mrb, "fopen");
+        _exit(2);
+      }
+      snprintf(pidstr, PID_STR_LEN, "%d", getpid());
+      fwrite(pidstr, PID_STR_LEN, 1, taskf);
+      if (fclose(taskf) != 0) {
+        mrb_sys_fail(mrb, "write pid to task");
+        _exit(2);
+      }
+    }
+
     execve(program, argv, environ);
 
     mrb_sys_fail(mrb, "execve");
